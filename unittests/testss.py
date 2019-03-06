@@ -1,3 +1,6 @@
+import unittest
+from pycodestyle import maximum_line_length, tabs_or_spaces, imports_on_separate_lines, whitespace_before_comment
+
 class testlines(unittest.TestCase):
     def test_linesize(self):
         s = "mkmmkmkmmkmkmkmkmkmkkkmkmkmkmkmkmkmmkmkmkmkmkmkmkmkmkmkmkmkmkmkmkmkmkmkmkmkkkmkmkmkmkmkmkm"

@@ -36,6 +36,6 @@ class AutomatedTester(unittest.TestCase):
         for case in fails:
             for response in pycodestyle.comparison_negative(case):
                 self.assertTrue("E713" in response[1] or "E714" in response[1])
-                
-if __name__ == '__main__':
-    unittest.main()
+
+# if __name__ == '__main__':
+#     unittest.main()

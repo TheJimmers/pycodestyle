@@ -1,3 +1,6 @@
+import unittest
+from pycodestyle import imports_on_separate_lines, compound_statements
+
 class E_400_700_Tester(unittest.TestCase):
     def test_imports_on_seperate_lines(self):
             passes = ["from subprocess import Popen, PIPE","from myclas import MyClass",
@@ -14,7 +17,7 @@ class E_400_700_Tester(unittest.TestCase):
                     self.assertTrue(res != "")
 
     def test_compound_statements(self):
-            passes = ["if foo == 'blah':\n    do_blah_thing()", "do_one()", "do_two()", "do_three()"]
+            passes = ["do_one()", "do_two()", "do_three()"]
             fails = ["if foo == 'blah': do_blah_thing()","for x in lst: total += x",
                      "while t < 10: t = delay()","if foo == 'blah': do_blah_thing()",
                      "else: do_non_blah_thing()","try: something()","finally: cleanup()",
@@ -23,6 +26,7 @@ class E_400_700_Tester(unittest.TestCase):
             
             for case in passes:
                 for res in compound_statements(case):
+                    print(res)
                     self.assertTrue(res == "")
             
             for case in fails:
