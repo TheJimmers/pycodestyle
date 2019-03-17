@@ -78,7 +78,7 @@ try:
 except ImportError:
     from ConfigParser import RawConfigParser
 
-__version__ = '2.4.0'
+__version__ = '2.5.0'
 
 DEFAULT_EXCLUDE = '.svn,CVS,.bzr,.hg,.git,__pycache__,.tox'
 DEFAULT_IGNORE = 'E121,E123,E126,E226,E24,E704,W503,W504'
@@ -119,7 +119,8 @@ WS_OPTIONAL_OPERATORS = ARITHMETIC_OP.union(['^', '&', '|', '<<', '>>', '%'])
 FUNCTION_RETURN_ANNOTATION_OP = ['->'] if sys.version_info >= (3, 5) else []
 WS_NEEDED_OPERATORS = frozenset([
     '**=', '*=', '/=', '//=', '+=', '-=', '!=', '<>', '<', '>',
-    '%=', '^=', '&=', '|=', '==', '<=', '>=', '<<=', '>>=', '='] +
+    '%=', '^=', '&=', '|=', '==', '<=', '>=', '<<=', '>>=', '=',
+    'and', 'in', 'is', 'or'] +
     FUNCTION_RETURN_ANNOTATION_OP)
 WHITESPACE = frozenset(' \t')
 NEWLINE = frozenset([tokenize.NL, tokenize.NEWLINE])
@@ -138,7 +139,7 @@ WHITESPACE_AFTER_COMMA_REGEX = re.compile(r'[,;:]\s*(?:  |\t)')
 COMPARE_SINGLETON_REGEX = re.compile(r'(\bNone|\bFalse|\bTrue)?\s*([=!]=)'
                                      r'\s*(?(1)|(None|False|True))\b')
 COMPARE_NEGATIVE_REGEX = re.compile(r'\b(not)\s+[^][)(}{ ]+\s+(in|is)\s')
-COMPARE_TYPE_REGEX = re.compile(r'(?:[=!]=|is(?:\s+not)?)\s*type(?:s.\w+Type'
+COMPARE_TYPE_REGEX = re.compile(r'(?:[=!]=|is(?:\s+not)?)\s+type(?:s.\w+Type'
                                 r'|\s*\(\s*([^)]*[^ )])\s*\))')
 KEYWORD_REGEX = re.compile(r'(\s*)\b(?:%s)\b(\s*)' % r'|'.join(KEYWORDS))
 OPERATOR_REGEX = re.compile(r'(?:[^,\s])(\s*)(?:[-+*/|!<=>%&^]+)(\s*)')
@@ -207,7 +208,7 @@ def tabs_or_spaces(physical_line, indent_char):
     tabs and spaces.  When using -tt these warnings become errors.
     These options are highly recommended!
 
-    Okay: if a == 0:\n        a = 1\n        b = 1
+    Okay: if a == 0:\n    a = 1\n    b = 1
     E101: if a == 0:\n        a = 1\n\tb = 1
     """
     indent = INDENT_REGEX.match(physical_line).group(1)
@@ -357,6 +358,16 @@ def blank_lines(logical_line, blank_lines, indent_level, line_number,
           ):
         yield 0, "E303 too many blank lines (%d)" % blank_lines
     elif STARTSWITH_TOP_LEVEL_REGEX.match(logical_line):
+        # If this is a one-liner (i.e. the next line is not more
+        # indented), and the previous line is also not deeper
+        # (it would be better to check if the previous line is part
+        # of another def/class at the same level), don't require blank
+        # lines around this.
+        prev_line = lines[line_number - 2] if line_number >= 2 else ''
+        next_line = lines[line_number] if line_number < len(lines) else ''
+        if (expand_indent(prev_line) <= indent_level and
+                expand_indent(next_line) <= indent_level):
+            return
         if indent_level:
             if not (blank_before == method_lines or
                     previous_indent_level < indent_level or
@@ -523,6 +534,12 @@ def indentation(logical_line, previous_logical, indent_char,
         yield 0, tmpl % (2 + c, "expected an indented block")
     elif not indent_expect and indent_level > previous_indent_level:
         yield 0, tmpl % (3 + c, "unexpected indentation")
+
+    if indent_expect:
+        expected_indent_amount = 8 if indent_char == '\t' else 4
+        expected_indent_level = previous_indent_level + expected_indent_amount
+        if indent_level > expected_indent_level:
+            yield 0, tmpl % (7, 'over-indented')
 
 
 @register_check
@@ -808,6 +825,7 @@ def missing_whitespace_around_operator(logical_line, tokens):
     E225: submitted +=1
     E225: x = x /2 - 1
     E225: z = x **y
+    E225: z = 1and 1
     E226: c = (a+b) * (a-b)
     E226: hypot2 = x*x + y*y
     E227: c = a|b
@@ -817,6 +835,7 @@ def missing_whitespace_around_operator(logical_line, tokens):
     need_space = False
     prev_type = tokenize.OP
     prev_text = prev_end = None
+    operator_types = (tokenize.OP, tokenize.NAME)
     for token_type, text, start, end, line in tokens:
         if token_type in SKIP_COMMENTS:
             continue
@@ -848,7 +867,7 @@ def missing_whitespace_around_operator(logical_line, tokens):
                     yield (need_space[0], "%s missing whitespace "
                            "around %s operator" % (code, optype))
                 need_space = False
-        elif token_type == tokenize.OP and prev_end is not None:
+        elif token_type in operator_types and prev_end is not None:
             if text == '=' and parens:
                 # Allow keyword args or defaults: foo(bar=None).
                 pass
@@ -1495,12 +1514,15 @@ def python_3000_backticks(logical_line):
 
 
 @register_check
-def python_3000_invalid_escape_sequence(logical_line, tokens):
+def python_3000_invalid_escape_sequence(logical_line, tokens, noqa):
     r"""Invalid escape sequences are deprecated in Python 3.6.
 
     Okay: regex = r'\.png$'
     W605: regex = '\.png$'
     """
+    if noqa:
+        return
+
     # https://docs.python.org/3/reference/lexical_analysis.html#string-and-bytes-literals
     valid = [
         '\n',
@@ -1569,12 +1591,19 @@ def python_3000_async_await_keywords(logical_line, tokens):
     for token_type, text, start, end, line in tokens:
         error = False
 
+        if token_type == tokenize.NL:
+            continue
+
         if state is None:
             if token_type == tokenize.NAME:
                 if text == 'async':
                     state = ('async_stmt', start)
                 elif text == 'await':
                     state = ('await', start)
+                elif (token_type == tokenize.NAME and
+                      text in ('def', 'for')):
+                    state = ('define', start)
+
         elif state[0] == 'async_stmt':
             if token_type == tokenize.NAME and text in ('def', 'with', 'for'):
                 # One of funcdef, with_stmt, or for_stmt. Return to
@@ -1587,8 +1616,15 @@ def python_3000_async_await_keywords(logical_line, tokens):
                 # An await expression. Return to looking for async/await
                 # names.
                 state = None
+            elif token_type == tokenize.OP and text == '(':
+                state = None
             else:
                 error = True
+        elif state[0] == 'define':
+            if token_type == tokenize.NAME and text in ('async', 'await'):
+                error = True
+            else:
+                state = None
 
         if error:
             yield (
@@ -2039,13 +2075,7 @@ class Checker(object):
                 self.check_physical(line + '\n')
                 self.line_number += 1
             self.multiline = False
-
-    def check_all(self, expected=None, line_offset=0):
-        """Run all checks on the input file."""
-        self.report.init_file(self.filename, self.lines, expected, line_offset)
-        self.total_lines = len(self.lines)
-        if self._ast_checks:
-            self.check_ast()
+    def setself(self):
         self.line_number = 0
         self.indent_char = None
         self.indent_level = self.previous_indent_level = 0
@@ -2053,6 +2083,14 @@ class Checker(object):
         self.previous_unindented_logical_line = ''
         self.tokens = []
         self.blank_lines = self.blank_before = 0
+
+    def check_all(self, expected=None, line_offset=0):
+        """Run all checks on the input file."""
+        self.report.init_file(self.filename, self.lines, expected, line_offset)
+        self.total_lines = len(self.lines)
+        if self._ast_checks:
+            self.check_ast()
+        setself(self)
         parens = 0
         for token in self.generate_tokens():
             self.tokens.append(token)
@@ -2252,7 +2290,13 @@ class DiffReport(StandardReport):
 
 class StyleGuide(object):
     """Initialize a PEP-8 instance with few options."""
-
+    def setopt(self, opt):
+        opt.benchmark_keys = BENCHMARK_KEYS[:]
+        opt.ignore_code = self.ignore_code
+        opt.physical_checks = self.get_checks('physical_line')
+        opt.logical_checks = self.get_checks('logical_line')
+        opt.ast_checks = self.get_checks('tree')
+        self.init_report()
     def __init__(self, *args, **kwargs):
         # build options from the command line
         self.checker_class = kwargs.pop('checker_class', Checker)
@@ -2284,12 +2328,8 @@ class StyleGuide(object):
         else:
             # Ignore all checks which are not explicitly selected
             options.ignore = ('',) if options.select else tuple(options.ignore)
-        options.benchmark_keys = BENCHMARK_KEYS[:]
-        options.ignore_code = self.ignore_code
-        options.physical_checks = self.get_checks('physical_line')
-        options.logical_checks = self.get_checks('logical_line')
-        options.ast_checks = self.get_checks('tree')
-        self.init_report()
+        self.setopt(options)
+
 
     def init_report(self, reporter=None):
         """Initialize the report instance."""
